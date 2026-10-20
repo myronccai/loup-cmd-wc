@@ -1,0 +1,194 @@
+@mode(host.dual)
+
+# Counting: one pass over an input's bytes that finds its newlines, words,
+# characters and longest line, decoding UTF-8 the way glibc's mbrtowc does
+# in a UTF-8 locale (which is what GNU wc relies on).
+
+pub struct Counts {
+    pub lines: int;
+    pub words: int;
+    pub chars: int;
+    pub bytes: int;
+    pub max_line: int;
+}
+
+pub func zero_counts(): Counts {
+    return Counts(lines = 0, words = 0, chars = 0, bytes = 0, max_line = 0);
+}
+
+# The sum of two inputs' counts; the longest line is the longer of the two.
+pub func add_counts(a: Counts, b: Counts): Counts {
+    return Counts(
+        lines = a.lines + b.lines,
+        words = a.words + b.words,
+        chars = a.chars + b.chars,
+        bytes = a.bytes + b.bytes,
+        max_line = if (a.max_line > b.max_line) { a.max_line } else { b.max_line },
+    );
+}
+
+func continuation(data: bytes, i: int, lo: int, hi: int): bool {
+    if (i >= data.len()) {
+        return false;
+    }
+    let b = data[i];
+    return b >= lo and b <= hi;
+}
+
+# The length of the character that starts at `data[i]`, or 0 if no
+# character starts there. Like glibc, it accepts the old 5- and 6-byte
+# forms and code points above U+10FFFF, and rejects overlong forms and
+# surrogates (U+D800 to U+DFFF).
+pub func sequence_length(data: bytes, i: int): int {
+    let b = data[i];
+    if (b < 0x80) {
+        return 1;
+    }
+    var length = 0;
+    var lo = 0x80;
+    var hi = 0xBF;
+    if (b >= 0xC2 and b <= 0xDF) {
+        length = 2;
+    } else if (b >= 0xE0 and b <= 0xEF) {
+        length = 3;
+        if (b == 0xE0) {
+            lo = 0xA0;
+        } else if (b == 0xED) {
+            hi = 0x9F;
+        }
+    } else if (b >= 0xF0 and b <= 0xF7) {
+        length = 4;
+        if (b == 0xF0) {
+            lo = 0x90;
+        }
+    } else if (b >= 0xF8 and b <= 0xFB) {
+        length = 5;
+        if (b == 0xF8) {
+            lo = 0x88;
+        }
+    } else if (b == 0xFC or b == 0xFD) {
+        length = 6;
+        if (b == 0xFC) {
+            lo = 0x84;
+        }
+    } else {
+        return 0;
+    }
+    if (!continuation(data, i + 1, lo, hi)) {
+        return 0;
+    }
+    for (k in 2..length) {
+        if (!continuation(data, i + k, 0x80, 0xBF)) {
+            return 0;
+        }
+    }
+    return length;
+}
+
+# The code point of the `length`-byte character at `data[i]`.
+pub func decode(data: bytes, i: int, length: int): int {
+    if (length == 1) {
+        return data[i];
+    }
+    let lead_bits = 7 - length;
+    var code = data[i] & ((1 << lead_bits) - 1);
+    for (k in 1..length) {
+        code = (code << 6) | (data[i + k] & 0x3F);
+    }
+    return code;
+}
+
+# Whether wc treats the character as white space between words: glibc's
+# iswspace in a UTF-8 locale, plus the no-break spaces GNU wc adds.
+pub func is_space(code: int): bool {
+    if (code <= 0x20) {
+        return code == 0x20 or (code >= 0x09 and code <= 0x0D);
+    }
+    return code == 0xA0 or code == 0x1680 or (code >= 0x2000 and code <= 0x200A)
+        or code == 0x2028 or code == 0x2029 or code == 0x202F or code == 0x205F
+        or code == 0x2060 or code == 0x3000;
+}
+
+# The display width of `code`, from the (first, width) runs of
+# `widths.width_runs()`. Code points past U+10FFFF have no width.
+pub func char_width(code: int, runs: list[int]): int {
+    if (code > 0x10FFFF) {
+        return 0;
+    }
+    var lo = 0;
+    var hi = runs.len() / 2 - 1;
+    while (lo < hi) {
+        let mid = (lo + hi + 1) / 2;
+        if (runs[mid * 2] <= code) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return runs[lo * 2 + 1];
+}
+
+# All the counts of one input. `runs` is the width table.
+pub func count_data(data: bytes, runs: list[int]): Counts {
+    let n = data.len();
+    var lines = 0;
+    var words = 0;
+    var chars = 0;
+    var longest = 0;
+    var column = 0;
+    var in_word = false;
+    var i = 0;
+    while (i < n) {
+        let b = data[i];
+        var width = 0;
+        var space = false;
+        if (b < 0x80) {
+            i += 1;
+            chars += 1;
+            if (b == 10 or b == 13 or b == 12) {
+                if (b == 10) {
+                    lines += 1;
+                }
+                if (column > longest) {
+                    longest = column;
+                }
+                column = 0;
+                space = true;
+            } else if (b == 9) {
+                width = 8 - column % 8;
+                space = true;
+            } else if (b == 32) {
+                width = 1;
+                space = true;
+            } else if (b == 11) {
+                space = true;
+            } else if (b > 32 and b < 127) {
+                width = 1;
+            }
+        } else {
+            let length = sequence_length(data, i);
+            if (length == 0) {
+                # A byte that is not part of a character: no width, not a
+                # character, but part of a word.
+                i += 1;
+            } else {
+                let code = decode(data, i, length);
+                i += length;
+                chars += 1;
+                width = char_width(code, runs);
+                space = is_space(code);
+            }
+        }
+        column += width;
+        if (space) {
+            in_word = false;
+        } else if (!in_word) {
+            words += 1;
+            in_word = true;
+        }
+    }
+    if (column > longest) {
+        longest = column;
+    }
+    return Counts(lines = lines, words = words, chars = chars, bytes = n, max_line = longest);
+}

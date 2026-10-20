@@ -1,0 +1,101 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from commands.counts import (Counts, count_data, sequence_length, decode, is_space, char_width, add_counts, zero_counts);
+from commands.widths import (width_runs);
+
+func counts_of(values: list[int]): Counts {
+    return count_data(bytesFromInts(values), width_runs());
+}
+
+func ascii(text: string): list[int] {
+    var out: list[int] = [];
+    for (ch in text) {
+        let c: char = char.fromString(ch).unwrap();
+        out.push(c.toInt());
+    }
+    return out;
+}
+
+func test_lines_words_bytes(): void {
+    let c = counts_of(ascii("one two\n  three\n"));
+    expectEq(c.lines, 2, "lines");
+    expectEq(c.words, 3, "words");
+    expectEq(c.bytes, 16, "bytes");
+    expectEq(c.chars, 16, "ASCII characters");
+    expectEq(counts_of(ascii("no newline")).lines, 0, "no newline, no line");
+    expectEq(counts_of(ascii("")).words, 0, "empty");
+}
+
+func test_separators(): void {
+    expectEq(counts_of([97, 9, 98, 11, 99, 12, 100, 13, 101]).words, 5, "TAB, VT, FF, CR");
+    expectEq(counts_of([97, 1, 98]).words, 1, "a control character is part of a word");
+    expectEq(counts_of([97, 0xC2, 0xA0, 98]).words, 2, "no-break space separates");
+    expectEq(counts_of([97, 0xE3, 0x80, 0x80, 98]).words, 2, "ideographic space separates");
+    expectEq(counts_of([97, 0xE2, 0x80, 0x8B, 98]).words, 1, "zero-width space does not");
+    expectEq(counts_of([97, 0xC2, 0x85, 98]).words, 1, "NEL does not");
+}
+
+func test_characters(): void {
+    let cafe = counts_of([99, 97, 102, 0xC3, 0xA9, 10]);
+    expectEq(cafe.chars, 5, "é is one character");
+    expectEq(cafe.bytes, 6, "and two bytes");
+    let bad = counts_of([97, 0xFF, 98, 10]);
+    expectEq(bad.chars, 3, "0xFF is not a character");
+    expectEq(bad.words, 1, "but it is part of the word");
+    expectEq(counts_of([0xFF, 10]).words, 1, "a lone bad byte is a word");
+    expectEq(counts_of([0xC3]).chars, 0, "a cut-off character is not one");
+}
+
+func test_sequence_length(): void {
+    let data = bytesFromInts([0x41, 0xC3, 0xA9, 0xE2, 0x82, 0xAC, 0xF0, 0x9F, 0x98, 0x80]);
+    expectEq(sequence_length(data, 0), 1, "ASCII");
+    expectEq(sequence_length(data, 1), 2, "two bytes");
+    expectEq(sequence_length(data, 3), 3, "three bytes");
+    expectEq(sequence_length(data, 6), 4, "four bytes");
+    expectEq(sequence_length(data, 2), 0, "a continuation byte");
+    expectEq(sequence_length(bytesFromInts([0xC0, 0x80]), 0), 0, "overlong");
+    expectEq(sequence_length(bytesFromInts([0xED, 0xA0, 0x80]), 0), 0, "surrogate");
+    expectEq(sequence_length(bytesFromInts([0xF4, 0x90, 0x80, 0x80]), 0), 4, "above U+10FFFF, as glibc");
+    expectEq(sequence_length(bytesFromInts([0xF8, 0x88, 0x80, 0x80, 0x80]), 0), 5, "old five-byte form");
+    expectEq(sequence_length(bytesFromInts([0xE2, 0x82]), 0), 0, "cut off");
+    expectEq(decode(data, 3, 3), 0x20AC, "euro sign");
+    expectEq(decode(data, 6, 4), 0x1F600, "emoji");
+}
+
+func test_is_space(): void {
+    expect(is_space(32) and is_space(9) and is_space(10) and is_space(13), "ASCII blanks");
+    expect(is_space(0xA0) and is_space(0x2007) and is_space(0x202F) and is_space(0x2060), "no-break spaces");
+    expect(is_space(0x3000) and is_space(0x1680) and is_space(0x2028), "other Unicode spaces");
+    expect(!is_space(0x85) and !is_space(0x200B) and !is_space(65), "not spaces");
+}
+
+func test_char_width(): void {
+    let runs = width_runs();
+    expectEq(char_width(65, runs), 1, "A");
+    expectEq(char_width(7, runs), 0, "control");
+    expectEq(char_width(0x301, runs), 0, "combining acute");
+    expectEq(char_width(0xAD, runs), 1, "soft hyphen");
+    expectEq(char_width(0x4E2D, runs), 2, "CJK");
+    expectEq(char_width(0x1F600, runs), 2, "emoji");
+    expectEq(char_width(0xFF21, runs), 2, "fullwidth A");
+    expectEq(char_width(0x200B, runs), 0, "zero-width space");
+    expectEq(char_width(0x110000, runs), 0, "past Unicode");
+}
+
+func test_max_line_width(): void {
+    expectEq(counts_of(ascii("ab\tc\n")).max_line, 9, "tab stops of 8");
+    expectEq(counts_of(ascii("abcd\rxy\n")).max_line, 4, "CR starts over");
+    expectEq(counts_of([97, 98, 99, 12, 100, 101]).max_line, 3, "FF starts over, no newline at the end");
+    expectEq(counts_of([0xE4, 0xB8, 0xAD, 0xE6, 0x96, 0x87, 10]).max_line, 4, "two wide characters");
+    expectEq(counts_of([101, 0xCC, 0x81, 10]).max_line, 1, "e and a combining mark");
+    expectEq(counts_of([97, 0xFF, 98]).max_line, 2, "a bad byte has no width");
+}
+
+func test_add_counts(): void {
+    let a = Counts(lines = 1, words = 2, chars = 3, bytes = 4, max_line = 9);
+    let b = Counts(lines = 10, words = 20, chars = 30, bytes = 40, max_line = 5);
+    let sum = add_counts(add_counts(zero_counts(), a), b);
+    expect(sum.lines == 11 and sum.words == 22 and sum.chars == 33 and sum.bytes == 44, "sums");
+    expectEq(sum.max_line, 9, "longest line is the maximum");
+}

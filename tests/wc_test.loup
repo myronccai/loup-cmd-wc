@@ -1,0 +1,58 @@
+@mode(host.dual)
+
+from debug.assert import (expect, expectEq);
+from cli.args import (Options, parse_args);
+from commands.counts import (Counts, zero_counts);
+from commands.wc import (Input, pad, selected, column_width, format_line, show_total, io_reason);
+
+func options(argv: list[string]): Options {
+    return parse_args(argv).unwrap();
+}
+
+func input(listed: bool, regular: bool, size: int): Input {
+    return Input(name = "f", named = true, problem = "", listed = listed,
+        regular = regular, size = size, counts = zero_counts());
+}
+
+func test_pad(): void {
+    expectEq(pad("7", 3), "  7", "padded");
+    expectEq(pad("1234", 3), "1234", "wider than the column");
+}
+
+func test_selected(): void {
+    let none: list[string] = [];
+    expectEq(selected(options(none)), 3, "default three");
+    expectEq(selected(options(["-L"])), 1, "-L");
+}
+
+func test_column_width(): void {
+    let none: list[string] = [];
+    let defaults = options(none);
+    expectEq(column_width(defaults, [input(true, true, 81), input(true, true, 5)]), 2, "digits of 86");
+    expectEq(column_width(defaults, [input(true, false, 0), input(true, true, 5)]), 7, "a pipe or directory");
+    expectEq(column_width(defaults, [input(false, false, 0), input(true, true, 100001)]), 6, "missing files do not count");
+    expectEq(column_width(options(["-l"]), [input(true, true, 100001)]), 1, "one count, one input");
+    expectEq(column_width(options(["-l"]), [input(true, false, 0)]), 1, "one count of a pipe");
+    expectEq(column_width(options(["-l", "--total=only"]), [input(true, true, 100001), input(true, true, 5)]), 1, "--total=only");
+    expectEq(column_width(defaults, [input(true, true, 0)]), 1, "an empty file");
+}
+
+func test_format_line(): void {
+    let c = Counts(lines = 2, words = 3, chars = 4, bytes = 5, max_line = 6);
+    let none: list[string] = [];
+    expectEq(format_line(c, options(none), 2, "abc", true), " 2  3  5 abc", "default order");
+    expectEq(format_line(c, options(["-Lmlcw"]), 1, "x", true), "2 3 4 5 6 x", "GNU order, whatever the options");
+    expectEq(format_line(c, options(["-c"]), 7, "", false), "      5", "no name");
+}
+
+func test_show_total(): void {
+    let none: list[string] = [];
+    expect(!show_total(options(none), 1) and show_total(options(none), 2), "auto");
+    expect(show_total(options(["--total=always"]), 1), "always");
+    expect(show_total(options(["--total=only"]), 1), "only");
+    expect(!show_total(options(["--total=never"]), 5), "never");
+}
+
+func test_io_reason(): void {
+    expectEq(io_reason("read_text failed on 'x': Permission denied (os error 13)"), "Permission denied", "reason");
+}

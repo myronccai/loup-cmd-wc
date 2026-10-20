@@ -1,0 +1,184 @@
+@mode(host.dual)
+
+# wc: counts each operand (or standard input), then prints one line per
+# input and a total line, with every count right-aligned to a common width
+# chosen the way GNU wc chooses it.
+
+from appinfo import (APP_NAME, EXIT_OK, EXIT_FAILURE);
+from cli.args import (Options, TOTAL_AUTO, TOTAL_ALWAYS, TOTAL_ONLY);
+from commands.counts import (Counts, zero_counts, add_counts, count_data);
+from commands.widths import (width_runs);
+from io.fs import (isDir, isFile);
+
+# What happened to one input. `problem` is "" for an input that was
+# counted, or GNU's reason; `listed` says whether it gets a line of counts
+# (a directory does, with zeros, before its error); `regular` and `size`
+# feed the column width.
+pub struct Input {
+    pub name: string;
+    pub named: bool;
+    pub problem: string;
+    pub listed: bool;
+    pub regular: bool;
+    pub size: int;
+    pub counts: Counts;
+}
+
+# How many counts the options select.
+pub func selected(opts: Options): int {
+    var n = 0;
+    for (on in [opts.lines, opts.words, opts.chars, opts.bytes, opts.max_line]) {
+        if (on) {
+            n += 1;
+        }
+    }
+    return n;
+}
+
+# `text` right-aligned in `width` columns.
+pub func pad(text: string, width: int): string {
+    var out = text;
+    while (out.len() < width) {
+        out = " " + out;
+    }
+    return out;
+}
+
+func digits(n: int): int {
+    var count = 1;
+    var rest = n;
+    while (rest >= 10) {
+        rest = rest / 10;
+        count += 1;
+    }
+    return count;
+}
+
+# The column width, as GNU wc's compute_number_width: 1 for a single count
+# of a single input or for --total=only; otherwise the number of digits of
+# the summed sizes of the regular files, and at least 7 if any input that
+# exists is not a regular file. Inputs that do not exist are left out.
+pub func column_width(opts: Options, inputs: list[Input]): int {
+    if (opts.total == TOTAL_ONLY or (inputs.len() == 1 and selected(opts) == 1)) {
+        return 1;
+    }
+    var total = 0;
+    var minimum = 1;
+    for (input in inputs) {
+        if (input.listed) {
+            if (input.regular) {
+                total += input.size;
+            } else {
+                minimum = 7;
+            }
+        }
+    }
+    let width = digits(total);
+    return if (width < minimum) { minimum } else { width };
+}
+
+# One output line: the selected counts in GNU's order, each right-aligned
+# to `width` and separated by a space, then the name if there is one.
+pub func format_line(c: Counts, opts: Options, width: int, name: string, named: bool): string {
+    var fields: list[string] = [];
+    if (opts.lines) {
+        fields.push(pad(str(c.lines), width));
+    }
+    if (opts.words) {
+        fields.push(pad(str(c.words), width));
+    }
+    if (opts.chars) {
+        fields.push(pad(str(c.chars), width));
+    }
+    if (opts.bytes) {
+        fields.push(pad(str(c.bytes), width));
+    }
+    if (opts.max_line) {
+        fields.push(pad(str(c.max_line), width));
+    }
+    var line = fields.join(" ");
+    if (named) {
+        line += " " + name;
+    }
+    return line;
+}
+
+# Whether to print the total line for `count` inputs.
+pub func show_total(opts: Options, count: int): bool {
+    return opts.total == TOTAL_ALWAYS or opts.total == TOTAL_ONLY
+        or (opts.total == TOTAL_AUTO and count > 1);
+}
+
+# The reason in a runtime IoError message such as
+# "read_text failed on 'x': Permission denied (os error 13)".
+pub func io_reason(message: string): string {
+    var reason = message;
+    let start = reason.index_of("': ");
+    if (start >= 0) {
+        reason = reason.slice(start + 3);
+    }
+    let end = reason.index_of(" (os error");
+    if (end >= 0) {
+        reason = reason.slice(0, end);
+    }
+    return reason;
+}
+
+# Reads and counts one operand ("-" or no operand at all is standard input).
+func measure(name: string, named: bool, runs: list[int]): Input {
+    let stdin = name == "-";
+    let path = if (stdin) { "/dev/stdin" } else { name };
+    if (!stdin and !exists(name)) {
+        return Input(name = name, named = named, problem = "No such file or directory",
+            listed = false, regular = false, size = 0, counts = zero_counts());
+    }
+    if (!stdin and isDir(name)) {
+        return Input(name = name, named = named, problem = "Is a directory",
+            listed = true, regular = false, size = 0, counts = zero_counts());
+    }
+    var problem = "";
+    var data = bytesFromInts([]);
+    try {
+        data = readBytes(path);
+    } catch (IoError as e) {
+        problem = io_reason(e.message);
+    }
+    if (problem != "") {
+        return Input(name = name, named = named, problem = problem,
+            listed = false, regular = false, size = 0, counts = zero_counts());
+    }
+    return Input(name = name, named = named, problem = "", listed = true,
+        regular = isFile(path), size = data.len(), counts = count_data(data, runs));
+}
+
+pub func run_wc(opts: Options): int {
+    let runs = width_runs();
+    var inputs: list[Input] = [];
+    if (opts.operands.len() == 0) {
+        inputs.push(measure("-", false, runs));
+    } else {
+        for (name in opts.operands) {
+            inputs.push(measure(name, true, runs));
+        }
+    }
+
+    let width = column_width(opts, inputs);
+    var status = EXIT_OK;
+    var total = zero_counts();
+    for (input in inputs) {
+        if (input.listed) {
+            total = add_counts(total, input.counts);
+            if (opts.total != TOTAL_ONLY) {
+                println(format_line(input.counts, opts, width, input.name, input.named));
+            }
+        }
+        if (input.problem != "") {
+            printErr(APP_NAME + ": " + input.name + ": " + input.problem);
+            status = EXIT_FAILURE;
+        }
+    }
+    if (show_total(opts, inputs.len())) {
+        println(format_line(total, opts, width, "total", opts.total != TOTAL_ONLY));
+    }
+    return status;
+}
