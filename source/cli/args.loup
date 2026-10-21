@@ -4,6 +4,9 @@
 # be combined (`-lw`), options and operands may be mixed, `--` ends the
 # options, a lone `-` is an operand (standard input), and a long option may
 # be abbreviated to any unique prefix (`--max`, `--tot=al`).
+#
+# Runtime: host.dual. Compiled into the native binary build/wc by `make
+# build`; `loup run source/main.loup` interprets the same code.
 
 pub const TOTAL_AUTO: int = 0;
 pub const TOTAL_ALWAYS: int = 1;

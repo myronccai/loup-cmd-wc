@@ -1,5 +1,13 @@
 @mode(host.dual)
 
+# Unit tests for wc's output (commands.wc): padding, the selected counts,
+# GNU's column width rule, line format, when the total is shown, and
+# IoError reasons.
+#
+# Runtime: host.dual, run by the test runner: `make test` interprets this
+# file with Stage0 (`loup-bootstrap test`, source/ on LOUPPATH), one test
+# per `func test_*()`. It is not part of the binary.
+
 from debug.assert import (expect, expectEq);
 from cli.args import (Options, parse_args);
 from commands.counts import (Counts, zero_counts);

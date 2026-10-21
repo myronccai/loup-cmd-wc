@@ -3,6 +3,13 @@
 # wc: counts each operand (or standard input), then prints one line per
 # input and a total line, with every count right-aligned to a common width
 # chosen the way GNU wc chooses it.
+#
+# Runtime: host.dual. Compiled into the native binary build/wc by `make
+# build`; `loup run source/main.loup` interprets the same code.
+#
+# Structure: every input is measured first (measure), because the column
+# width depends on all of them; then run_wc prints the lines, the errors
+# in their place, and the total.
 
 from appinfo import (APP_NAME, EXIT_OK, EXIT_FAILURE);
 from cli.args import (Options, TOTAL_AUTO, TOTAL_ALWAYS, TOTAL_ONLY);
@@ -128,6 +135,8 @@ pub func io_reason(message: string): string {
 func measure(name: string, named: bool, runs: list[int]): Input {
     let stdin = name == "-";
     let path = if (stdin) { "/dev/stdin" } else { name };
+    # Checked before reading: natively a failed read ends the program
+    # rather than throwing, so the catch below only helps under Stage0.
     if (!stdin and !exists(name)) {
         return Input(name = name, named = named, problem = "No such file or directory",
             listed = false, regular = false, size = 0, counts = zero_counts());

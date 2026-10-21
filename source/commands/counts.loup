@@ -3,6 +3,15 @@
 # Counting: one pass over an input's bytes that finds its newlines, words,
 # characters and longest line, decoding UTF-8 the way glibc's mbrtowc does
 # in a UTF-8 locale (which is what GNU wc relies on).
+#
+# Runtime: host.dual. Compiled into the native binary build/wc by `make
+# build`; `loup run source/main.loup` interprets the same code. It reads
+# bytes and decodes UTF-8 itself because the lanes disagree on strings that
+# are not valid UTF-8; on bytes all three give the same counts.
+#
+# Structure: the Counts record; UTF-8 decoding (sequence_length, decode);
+# the character classes wc needs (is_space, char_width over the table in
+# commands.widths); then count_data, the single pass.
 
 pub struct Counts {
     pub lines: int;
@@ -137,6 +146,11 @@ pub func count_data(data: bytes, runs: list[int]): Counts {
     var longest = 0;
     var column = 0;
     var in_word = false;
+    # Each step takes one byte (ASCII or invalid) or one UTF-8 character and
+    # works out its display width and whether it is white space; the word
+    # and column bookkeeping after the branch is shared. `column` is the
+    # width of the current display line for -L: newline, CR and FF end it,
+    # and a TAB moves to the next multiple of 8.
     var i = 0;
     while (i < n) {
         let b = data[i];

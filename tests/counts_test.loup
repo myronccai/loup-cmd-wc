@@ -1,5 +1,14 @@
 @mode(host.dual)
 
+# Unit tests for the counting pass (commands.counts): lines, words and
+# bytes, word separators, UTF-8 characters and invalid bytes, white space,
+# display widths and -L. Inputs are built as bytes with bytesFromInts, so
+# invalid UTF-8 can be tested here too.
+#
+# Runtime: host.dual, run by the test runner: `make test` interprets this
+# file with Stage0 (`loup-bootstrap test`, source/ on LOUPPATH), one test
+# per `func test_*()`. It is not part of the binary.
+
 from debug.assert import (expect, expectEq);
 from commands.counts import (Counts, count_data, sequence_length, decode, is_space, char_width, add_counts, zero_counts);
 from commands.widths import (width_runs);
