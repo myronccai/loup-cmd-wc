@@ -9,31 +9,40 @@
 # bytes and decodes UTF-8 itself because the lanes disagree on strings that
 # are not valid UTF-8; on bytes all three give the same counts.
 #
-# Structure: the Counts record; UTF-8 decoding (sequence_length, decode);
-# the character classes wc needs (is_space, char_width over the table in
-# commands.widths); then count_data, the single pass.
+# Structure: the Counts record, which adds up with `+`; UTF-8 decoding
+# (sequence_length, decode); the character classes wc needs (is_space,
+# char_width over the table in commands.widths); then count_data, the
+# single pass.
+#
+# sequence_length and decode stay two calls rather than one returning a
+# (code, length) tuple: natively every returned tuple is a heap value that
+# is never freed, which made count_data use ten times the memory.
 
-pub struct Counts {
+## The counts of one input, or of several added up with `+` (the total
+## line). A struct built only in this module: natively, a struct literal
+## in another module would disagree about its layout.
+pub struct Counts implements Add[Counts, Counts] {
     pub lines: int;
     pub words: int;
     pub chars: int;
     pub bytes: int;
     pub max_line: int;
+
+    ## The sum of two inputs' counts; the longest line is the longer of
+    ## the two.
+    operator func +(other: Counts): Counts {
+        return Counts(
+            lines = this.lines + other.lines,
+            words = this.words + other.words,
+            chars = this.chars + other.chars,
+            bytes = this.bytes + other.bytes,
+            max_line = if (this.max_line > other.max_line) { this.max_line } else { other.max_line },
+        );
+    }
 }
 
 pub func zero_counts(): Counts {
     return Counts(lines = 0, words = 0, chars = 0, bytes = 0, max_line = 0);
-}
-
-# The sum of two inputs' counts; the longest line is the longer of the two.
-pub func add_counts(a: Counts, b: Counts): Counts {
-    return Counts(
-        lines = a.lines + b.lines,
-        words = a.words + b.words,
-        chars = a.chars + b.chars,
-        bytes = a.bytes + b.bytes,
-        max_line = if (a.max_line > b.max_line) { a.max_line } else { b.max_line },
-    );
 }
 
 func continuation(data: bytes, i: int, lo: int, hi: int): bool {
@@ -102,7 +111,8 @@ pub func decode(data: bytes, i: int, length: int): int {
     let lead_bits = 7 - length;
     var code = data[i] & ((1 << lead_bits) - 1);
     for (k in 1..length) {
-        code = (code << 6) | (data[i + k] & 0x3F);
+        code <<= 6;
+        code |= data[i + k] & 0x3F;
     }
     return code;
 }
@@ -139,6 +149,7 @@ pub func char_width(code: int, runs: list[int]): int {
 
 # All the counts of one input. `runs` is the width table.
 pub func count_data(data: bytes, runs: list[int]): Counts {
+    const TAB_STOP: int = 8;
     let n = data.len();
     var lines = 0;
     var words = 0;
@@ -169,7 +180,7 @@ pub func count_data(data: bytes, runs: list[int]): Counts {
                 column = 0;
                 space = true;
             } else if (b == 9) {
-                width = 8 - column % 8;
+                width = TAB_STOP - column % TAB_STOP;
                 space = true;
             } else if (b == 32) {
                 width = 1;

@@ -10,7 +10,7 @@
 # per `func test_*()`. It is not part of the binary.
 
 from debug.assert import (expect, expectEq);
-from commands.counts import (Counts, count_data, sequence_length, decode, is_space, char_width, add_counts, zero_counts);
+from commands.counts import (Counts, count_data, sequence_length, decode, is_space, char_width, zero_counts);
 from commands.widths import (width_runs);
 
 func counts_of(values: list[int]): Counts {
@@ -104,7 +104,7 @@ func test_max_line_width(): void {
 func test_add_counts(): void {
     let a = Counts(lines = 1, words = 2, chars = 3, bytes = 4, max_line = 9);
     let b = Counts(lines = 10, words = 20, chars = 30, bytes = 40, max_line = 5);
-    let sum = add_counts(add_counts(zero_counts(), a), b);
+    let sum = zero_counts() + a + b;
     expect(sum.lines == 11 and sum.words == 22 and sum.chars == 33 and sum.bytes == 44, "sums");
     expectEq(sum.max_line, 9, "longest line is the maximum");
 }

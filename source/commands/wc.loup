@@ -13,8 +13,9 @@
 
 from appinfo import (APP_NAME, EXIT_OK, EXIT_FAILURE);
 from cli.args import (Options, TOTAL_AUTO, TOTAL_ALWAYS, TOTAL_ONLY);
-from commands.counts import (Counts, zero_counts, add_counts, count_data);
+from commands.counts import (Counts, zero_counts, count_data);
 from commands.widths import (width_runs);
+from core.string_utils import (padLeft);
 from io.fs import (isDir, isFile);
 
 # What happened to one input. `problem` is "" for an input that was
@@ -42,22 +43,15 @@ pub func selected(opts: Options): int {
     return n;
 }
 
-# `text` right-aligned in `width` columns.
-pub func pad(text: string, width: int): string {
-    var out = text;
-    while (out.len() < width) {
-        out = " " + out;
-    }
-    return out;
-}
-
-func digits(n: int): int {
-    var count = 1;
+# How many decimal digits `n` (at least 0) has. A do/while because every
+# number, 0 included, has at least one digit.
+pub func digits(n: int): int {
+    var count = 0;
     var rest = n;
-    while (rest >= 10) {
-        rest = rest / 10;
+    do {
         count += 1;
-    }
+        rest //= 10;
+    } while (rest > 0);
     return count;
 }
 
@@ -89,19 +83,19 @@ pub func column_width(opts: Options, inputs: list[Input]): int {
 pub func format_line(c: Counts, opts: Options, width: int, name: string, named: bool): string {
     var fields: list[string] = [];
     if (opts.lines) {
-        fields.push(pad(str(c.lines), width));
+        fields.push(padLeft(str(c.lines), width, " "));
     }
     if (opts.words) {
-        fields.push(pad(str(c.words), width));
+        fields.push(padLeft(str(c.words), width, " "));
     }
     if (opts.chars) {
-        fields.push(pad(str(c.chars), width));
+        fields.push(padLeft(str(c.chars), width, " "));
     }
     if (opts.bytes) {
-        fields.push(pad(str(c.bytes), width));
+        fields.push(padLeft(str(c.bytes), width, " "));
     }
     if (opts.max_line) {
-        fields.push(pad(str(c.max_line), width));
+        fields.push(padLeft(str(c.max_line), width, " "));
     }
     var line = fields.join(" ");
     if (named) {
@@ -176,7 +170,7 @@ pub func run_wc(opts: Options): int {
     var total = zero_counts();
     for (input in inputs) {
         if (input.listed) {
-            total = add_counts(total, input.counts);
+            total = total + input.counts;
             if (opts.total != TOTAL_ONLY) {
                 println(format_line(input.counts, opts, width, input.name, input.named));
             }
